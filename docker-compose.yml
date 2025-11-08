@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: meeting-tools-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: meeting
+    ports:
+      - "5432:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: meeting-tools-app
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    environment:
+      # Point to local Postgres
+      DATABASE_URL: postgres://postgres:postgres@db:5432/meeting
+      NODE_ENV: production
+      APP_TIMEZONE: Asia/Tokyo
+      # Provide Slack tokens via your local .env (optional for /healthz only)
+      # SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      # SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      # SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      # GCALENDAR_ID_SHARED: ${GCALENDAR_ID_SHARED}
+      # GOOGLE_PROJECT_ID: ${GOOGLE_PROJECT_ID}
+      # GOOGLE_CLIENT_EMAIL: ${GOOGLE_CLIENT_EMAIL}
+      # GOOGLE_PRIVATE_KEY: ${GOOGLE_PRIVATE_KEY}
+      # GSUITE_DELEGATED_USER: ${GSUITE_DELEGATED_USER}
+
+volumes:
+  dbdata:
+
