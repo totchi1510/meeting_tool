@@ -25,6 +25,8 @@ Slack内で日程調整を完結し、締切時に自動確定してカレンダ
 - `/mtg close <event_id>`: 手動確定（作成者or管理者のみ、エフェメラル）
 - `/room [now|today|week]`: 部屋の空き状況（エフェメラル）
 - `/cal link`: 購読用リンク（ICS購読URL、エフェメラル）
+  - 共有ICS: `/ics/shared.ics`
+  - 個人ICS: `/ics/u/<token>.ics`（自分が必要なミーティングのみ）
 - `/me set|show`: 学部・学年の登録/確認（エフェメラル）
 - `/help`: 使い方（エフェメラル）
 

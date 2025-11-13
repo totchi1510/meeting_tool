@@ -86,9 +86,20 @@ export async function ensureOAuthClientWithToken() {
   return oauth2Client;
 }
 
+function resolveSharedCalendarId(): string | undefined {
+  const raw = process.env.GCALENDAR_ID_SHARED || '';
+  if (!raw) return undefined;
+  // Guard: if someone set an ICS URL or any URL, ignore and fallback to primary
+  if (/^https?:\/\//i.test(raw) || /\.ics(\b|$)/i.test(raw)) {
+    console.warn('[gcal-oauth] GCALENDAR_ID_SHARED looks like a URL (.ics). Falling back to primary.');
+    return undefined;
+  }
+  return raw;
+}
+
 export async function registerFixedEventToGCalOAuth(eventId: string) {
   if (!oauthEnabled() || !hasOAuthClientEnv()) return;
-  const calId = process.env.GCALENDAR_ID_SHARED || undefined; // optional: user default calendar if unset
+  const calId = resolveSharedCalendarId(); // optional: user default calendar if unset
 
   const oauth2Client = await ensureOAuthClientWithToken();
   if (!oauth2Client) {
@@ -155,3 +166,27 @@ export async function registerFixedEventToGCalOAuth(eventId: string) {
   }
 }
 
+export async function cancelFixedEventFromGCalOAuth(eventId: string) {
+  if (!oauthEnabled() || !hasOAuthClientEnv()) return;
+  const calId = resolveSharedCalendarId();
+
+  const oauth2Client = await ensureOAuthClientWithToken();
+  if (!oauth2Client) {
+    console.warn('[gcal-oauth] no stored token; skip cancel');
+    return;
+  }
+
+  try {
+    const b = await query<{ gcal_event_id: string | null }>(
+      `select gcal_event_id from bookings where event_id=$1 limit 1`,
+      [eventId]
+    );
+    const gId = b.rowCount ? b.rows[0].gcal_event_id : null;
+    if (!gId) return; // nothing to delete
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    await calendar.events.delete({ calendarId: calId || 'primary', eventId: gId });
+  } catch (e) {
+    console.error('[gcal-oauth] cancel failed', e);
+  }
+}

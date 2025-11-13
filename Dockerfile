@@ -16,7 +16,7 @@ ENV TZ=Asia/Tokyo
 WORKDIR /app
 COPY . .
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi \
- && npm run build || true
+ && npm run build
 
 # Runner image
 FROM node:20-alpine AS runner
@@ -25,7 +25,7 @@ ENV TZ=Asia/Tokyo
 WORKDIR /app
 COPY --from=base /app/node_modules ./node_modules
 COPY package.json ./package.json
-COPY dist ./dist
+COPY --from=builder /app/dist ./dist
 COPY migrations ./migrations
 
 # Expose optional port for health checks (Socket Modeでも稼働確認用)
