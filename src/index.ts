@@ -1097,6 +1097,57 @@ if (!hasSlackEnv) {
               }
             }
           }
+          // Additional join reminder: 10 minutes before start
+          const join10Due = await query<{ id: string; start_at: string; end_at: string }>(
+            `select e.id, b.start_at, b.end_at
+               from events e
+               join bookings b on b.event_id=e.id
+              where e.status='fixed' and now() >= (b.start_at - interval '10 minutes')`
+          );
+          for (const ev of join10Due.rows) {
+            let meta: { title: string | null; meeting_url: string | null; slack_channel_id: string | null; slack_message_ts: string | null } | null = null;
+            try {
+              const m = await query<{ title: string | null; meeting_url: string | null; slack_channel_id: string | null; slack_message_ts: string | null }>(
+                `select title, meeting_url, slack_channel_id, slack_message_ts from events where id=$1`,
+                [ev.id]
+              );
+              meta = m.rowCount ? m.rows[0] : null;
+            } catch {}
+            const atts = await query<{ slack_user_id: string }>(`select slack_user_id from attendance_logs where event_id=$1`, [ev.id]);
+            for (const a of atts.rows) {
+              const token = await query<{ id: string }>(
+                `insert into reminders_sent(event_id, user_id, type)
+                 values ($1,$2,'join10')
+                 on conflict do nothing
+                 returning id`,
+                [ev.id, a.slack_user_id]
+              );
+              if (!token.rowCount) continue;
+              try {
+                const open = await (global as any)._boltClient?.conversations.open({ users: a.slack_user_id });
+                const dm = open?.channel?.id;
+                if (dm) {
+                  let permalink: string | null = null;
+                  if (meta?.slack_channel_id && meta?.slack_message_ts) {
+                    try {
+                      const perm = await (global as any)._boltClient?.chat.getPermalink({
+                        channel: meta.slack_channel_id,
+                        message_ts: meta.slack_message_ts,
+                      });
+                      permalink = (perm as any)?.permalink || null;
+                    } catch {}
+                  }
+                  const when = formatTimeRange(ev.start_at, ev.end_at);
+                  const linkLine = meta?.meeting_url ? `\n参加リンク: ${meta.meeting_url}` : '';
+                  const permLine = permalink ? `\n詳細: ${permalink}` : '';
+                  const text = `[開始直前リマインド] ${when} 開始10分前です。準備をお願いします。${linkLine}${permLine}`.trim();
+                  await (global as any)._boltClient?.chat.postMessage({ channel: dm, text });
+                }
+              } catch (e) {
+                console.warn('[remind] join10 DM failed', e);
+              }
+            }
+          }
         } catch (e) {
           console.error('[cron] auto-close failed', e);
         }
