@@ -1001,38 +1001,43 @@ if (!hasSlackEnv) {
             // users required but not yet voted
             const users = await query<{ slack_user_id: string }>(`select slack_user_id from event_required_users where event_id=$1`, [ev.id]);
             for (const u of users.rows) {
-              const sent = await query(`select 1 from reminders_sent where event_id=$1 and user_id=$2 and type='vote'`, [ev.id, u.slack_user_id]);
-              if (sent.rowCount) continue;
               const voted = await query(
                 `select 1 from votes v join event_options eo on eo.id=v.event_option_id where eo.event_id=$1 and v.slack_user_id=$2 limit 1`,
                 [ev.id, u.slack_user_id]
               );
-              if (!voted.rowCount) {
-                try {
-                  const open = await (global as any)._boltClient?.conversations.open({ users: u.slack_user_id });
-                  const dm = open?.channel?.id;
-                  if (dm) {
-                    // Build context with title, deadline and permalink (if available)
-                    let link: string | null = null;
-                    if (meta?.slack_channel_id && meta?.slack_message_ts) {
-                      try {
-                        const perm = await (global as any)._boltClient?.chat.getPermalink({
-                          channel: meta.slack_channel_id,
-                          message_ts: meta.slack_message_ts,
-                        });
-                        link = (perm as any)?.permalink || null;
-                      } catch {}
-                    }
-                    const title = meta?.title ? `「${meta.title}」` : 'このミーティング';
-                    const deadline = meta?.deadline_at ? `締切: ${formatDateTime(meta.deadline_at)}` : '';
-                    const suffix = link ? `\n投票はこちら: ${link}` : '';
-                    const msg = `[投票リマインド] ${title} の投票がまだです。${deadline}${suffix}`.trim();
-                    await (global as any)._boltClient?.chat.postMessage({ channel: dm, text: msg });
-                    await query(`insert into reminders_sent(event_id, user_id, type) values ($1,$2,'vote') on conflict do nothing`, [ev.id, u.slack_user_id]);
+              if (voted.rowCount) continue;
+              // Acquire send-token first to avoid duplicate DMs across instances
+              const token = await query<{ id: string }>(
+                `insert into reminders_sent(event_id, user_id, type)
+                 values ($1,$2,'vote')
+                 on conflict do nothing
+                 returning id`,
+                [ev.id, u.slack_user_id]
+              );
+              if (!token.rowCount) continue; // another instance already handled it
+              try {
+                const open = await (global as any)._boltClient?.conversations.open({ users: u.slack_user_id });
+                const dm = open?.channel?.id;
+                if (dm) {
+                  // Build context with title, deadline and permalink (if available)
+                  let link: string | null = null;
+                  if (meta?.slack_channel_id && meta?.slack_message_ts) {
+                    try {
+                      const perm = await (global as any)._boltClient?.chat.getPermalink({
+                        channel: meta.slack_channel_id,
+                        message_ts: meta.slack_message_ts,
+                      });
+                      link = (perm as any)?.permalink || null;
+                    } catch {}
                   }
-                } catch (e) {
-                  console.warn('[remind] vote DM failed', e);
+                  const title = meta?.title ? `「${meta.title}」` : 'このミーティング';
+                  const deadline = meta?.deadline_at ? `締切: ${formatDateTime(meta.deadline_at)}` : '';
+                  const suffix = link ? `\n投票はこちら: ${link}` : '';
+                  const msg = `[投票リマインド] ${title} の投票がまだです。${deadline}${suffix}`.trim();
+                  await (global as any)._boltClient?.chat.postMessage({ channel: dm, text: msg });
                 }
+              } catch (e) {
+                console.warn('[remind] vote DM failed', e);
               }
             }
           }
@@ -1056,8 +1061,15 @@ if (!hasSlackEnv) {
             } catch {}
             const atts = await query<{ slack_user_id: string }>(`select slack_user_id from attendance_logs where event_id=$1`, [ev.id]);
             for (const a of atts.rows) {
-              const sent = await query(`select 1 from reminders_sent where event_id=$1 and user_id=$2 and type='join'`, [ev.id, a.slack_user_id]);
-              if (sent.rowCount) continue;
+              // Acquire send-token first to avoid duplicate DMs across instances
+              const token = await query<{ id: string }>(
+                `insert into reminders_sent(event_id, user_id, type)
+                 values ($1,$2,'join')
+                 on conflict do nothing
+                 returning id`,
+                [ev.id, a.slack_user_id]
+              );
+              if (!token.rowCount) continue; // already handled elsewhere
               try {
                 const open = await (global as any)._boltClient?.conversations.open({ users: a.slack_user_id });
                 const dm = open?.channel?.id;
@@ -1079,7 +1091,6 @@ if (!hasSlackEnv) {
                   const permLine = permalink ? `\n詳細: ${permalink}` : '';
                   const text = `[開始前リマインド] ${title} ${when} まもなくミーティング開始です。${linkLine}${permLine}`.trim();
                   await (global as any)._boltClient?.chat.postMessage({ channel: dm, text });
-                  await query(`insert into reminders_sent(event_id, user_id, type) values ($1,$2,'join') on conflict do nothing`, [ev.id, a.slack_user_id]);
                 }
               } catch (e) {
                 console.warn('[remind] join DM failed', e);
